@@ -1,0 +1,545 @@
+#!/usr/bin/env python3
+
+import sys
+import nltk
+import nltk.data
+import spacy
+from collections import Counter
+import en_core_web_sm
+import io
+import gensim
+import time
+from nltk.corpus import stopwords
+import string
+import pdb
+import re
+# from stanfordcorenlp import StanfordCoreNLP
+from nltk.tree import Tree
+# from stanfordnlp.server import CoreNLPClient
+import os
+os.environ["CORENLP_HOME"] = 'stanford-corenlp-full-2018-10-05'
+from nltk.parse import CoreNLPParser
+from nltk.parse.corenlp import CoreNLPServer
+from nltk.corpus import wordnet
+import neuralcoref
+from stanfordserver import parser
+import psutil
+#  from  nltk.parse.corenlpnltk.pa  import CoreNLPParser
+
+# STANFORD = os.path.join("models", "stanford-corenlp-full-2018-10-05")
+
+# Create the server
+server = CoreNLPServer(
+   os.path.join("stanford-corenlp-full-2018-10-05/stanford-corenlp-3.9.2.jar"),
+   os.path.join("stanford-corenlp-full-2018-10-05/stanford-corenlp-3.9.2-models.jar"),    
+)
+
+# Start the server in the background
+
+
+
+
+nlp = spacy.load('en')
+neuralcoref.add_to_pipe(nlp)
+
+def getTrees(client, sentences):
+    # take in list of sentences and gets back list of each parse
+    parses = []
+    try:
+        parse = list(parser.parse(sentences.split()))
+        return parse
+    except:
+        print("")
+        return None
+    # return parses
+
+
+def extract_phrase(tree_str, label):
+    phrases = []
+    for tree in tree_str[0]:
+        for subtree in tree.subtrees():
+            if subtree.label() == label:
+                t = subtree
+                t = ' '.join(subtree.leaves())
+                t=t.replace(" -LRB-", "")
+                t=t.replace("-RRB-", "")
+                t=t.replace(" -LRB-", "")
+                t=t.replace("-RRB-", "")
+                phrases.append(t)
+    return phrases
+"""
+def extract_phrase(trees, label):
+    res = []
+    for tree in trees:
+        result = extract_phrase2(tree, label)
+        res+=result
+    return res
+"""
+def extract_phrase2(tree, label):
+    res=[]
+    if str(tree) == '[]':
+        return res
+    for small in tree.child:
+        if str(small.value)==label:
+            res += [in_order_traverse(small)]
+        res+=extract_phrase2(small, label)
+    return res
+
+def in_order_traverse(tree):
+    res=""
+    if str(tree) == '[]':
+        return res
+        # print(tree.child.value)
+        # return tree.child.value
+    for small in tree.child:
+        if str(small.child)=='[]':
+            res += small.value + " "
+        res+=in_order_traverse(small)
+    return res
+    # return res
+    """
+    if len(tree)!=0:
+        res+=in_order_traverse(tree[0].child)
+    if len(tree)==1:
+        print(tree.child.value)
+    if len(tree) > 1:
+        res+=in_order_traverse(tree[1].child)
+    return res
+    """
+"""
+def extract_phrase(trees, label):
+    phrases = []
+    for tree in trees:
+        for subtree in tree.subtrees():
+            if subtree.label() == label:
+                t = subtree
+                s=""
+                for leaf in t.leaves():
+                    if leaf[0]!="-":
+                        s+=leaf+" "
+                phrases.append(s)
+    return phrases
+ """  
+
+def tokenize_text(text):
+    token_sen = nltk.sent_tokenize(text)
+    word = []
+    for i in range(len(token_sen)):
+        word.append(nltk.word_tokenize(token_sen[i]))
+    return word
+
+def coref_rephrase(text, coref):
+    pronouns = ['PRP', 'PRP$']
+    nouns = ['NNP', 'NN', 'NNS', 'NNPS']
+    process_text = tokenize_text(text)
+    for coref_entity in coref:
+        (sent, start, end, word)=coref_entity[0]  
+        pos_tag_subject = nltk.pos_tag([word])
+        for (sen, st, en, pronoun) in coref_entity:
+            pos_tag_pronoun = nltk.pos_tag([pronoun])
+            if pos_tag_subject[0][1] in nouns and pos_tag_pronoun[0][1] in pronouns:
+                process_text[sen-1][st-1]=pos_tag_subject[0][0]
+
+    rephrase = [[' '.join(word) for word in process_text]]
+    rerephrase=""
+    for sentence in rephrase[0]:
+        rerephrase+=sentence+" "
+    return rerephrase
+
+def preProcessQuestion(question, nlp):
+    token_question = nlp(question)
+    pos_tags = []
+    for token in token_question:
+        pos_tags.append((token.text, token.pos_))
+    return pos_tags
+"""
+# Figure out what kind of question it is 
+# PERSON (who)
+# PLACE (where)
+# TIME (when)
+# QUANTITY (how many)
+# IDEA (what) how are we gonna deal w like "what time?"
+# go off the naiive assumption that the question word will be the first word
+# still haven't dealt with posession
+"""
+def questionType(token_questions):
+    if len(token_questions) < 0: return (None, "ERR")
+    (word, pos) = token_questions[0]
+    q_type = "UNK"
+    word = word.lower() 
+    if word == "who":
+        q_type = "PERSON"
+    elif word == "where":
+        q_type = "LOCATION"
+    elif word == "when":
+        q_type = "TIME"
+    elif word == "how":
+        (word2, _) = token_questions[1]
+        if word2 == "much" or word2 == "many":
+            q_type = "QUANTITY" 
+        elif word2 == "come":
+            q_type = "REASON"
+        elif word2 == "did":
+            q_type = "IDEA"
+        else:
+            q_type: "IDEA"
+    elif word == "what":
+        q_type = "IDEA"
+    elif word == "does" or word=="did" or word == "do":
+        q_type = "BINARY"
+    elif word == "is":
+        q_type = "BINARY"
+    elif word == "why":
+        q_type = "REASON"
+    else:
+        q_type = "UNK"
+    return (token_questions, q_type)
+    
+def questionTypeNER(question):
+    result = nlp(question)
+    pprint([(X.text, X.label_) for X in result.ents])
+    print("")
+    pprint([(X, X.ent_iob_, X.ent_type_) for X in result])
+
+# what's left is token_question[1:]
+def findSubject(token_questions):
+    # print(token_questions)
+    keywords = []
+    POS = ["PROPN", "NOUN", "NUM"]
+    # consider filtering out stupid verbs 
+    for i in token_questions:
+        if i[1] in POS:
+            keywords.append(i[0])
+    return keywords
+    
+def getEntities(text):
+    doc=nlp(text)
+    l=[(str(X), X.ent_type_) for X in doc]
+    d={}
+    for (x,y) in l:
+        if x not in d:
+            d[x]=y
+    return d
+
+# answers questions requiring multiple sentence answers; finds relevant sentences
+def answerLong(q, sentences):
+    q=q[:len(q)-1]
+    question=preProcessQuestion(q, nlp)
+
+    allKeywords=[]
+    allKeywords = findSubject(question)
+    # print(allKeywords)
+            
+    answerSentences=[]
+    for sentence1 in sentences:
+        sentence=sentence1[:len(sentence1)-1].lower()
+        sentence=sentence.split()
+        allKey=True
+        keywordCopy=allKeywords+[]
+        
+        for keyword in allKeywords:
+            key = nltk.stem.wordnet.WordNetLemmatizer().lemmatize(keyword.lower(),'v')
+            for sentenceWord in sentence:
+                sentWord=nltk.stem.wordnet.WordNetLemmatizer().lemmatize(sentenceWord.lower(),'v')
+                if keyword == sentenceWord or key==sentenceWord or key==sentWord:
+                    answer=True
+                    if keyword in keywordCopy:
+                        keywordCopy.remove(keyword)
+            if keywordCopy!=[]:
+                allKey=False
+            else:
+                allKey=True
+        if allKey==True:
+            answerSentences+=[sentence1]
+
+    answer=""
+
+    for i in answerSentences:
+        answer+=i        
+    if answer=="":
+        answer="idk"
+    if answer=="" or len(answerSentences)>1 or answer == "idk":
+        answer = ""
+        if len(answerSentences)>2:
+            simularities=getSimilarities(q, answerSentences)
+        else:
+            simularities=getSimilarities(q, sentences)
+        # print("this is the similar sentences we got:", simularities[:2])
+        answerSentences=simularities[:1]
+        for (num, sent) in answerSentences:
+            answer+=sent 
+
+    return answer
+
+def get_other_entities(qtype):
+    if qtype=='PERSON':
+        return ['ORG', 'NORP']
+    elif qtype=='LOCATION':
+        return ['GPE', 'LOC', 'FAC']
+    elif qtype=='TIME':
+        return ['DATE', 'ORDINAL']
+    elif qtype=='QUANTITY':
+        return ['MONEY', 'PERCENT','CARDINAL']
+    else:
+        return []
+
+def answerShort(q,s, qtype, client):
+    if s=="idk":
+        return s
+    client = CoreNLPParser()
+
+    trees = getTrees(client, s)
+
+    dictS=getEntities(s)
+    answer=""
+    """
+    exclude = set(string.punctuation)
+    regex = re.compile('[%s]' % re.escape(string.punctuation))
+    s = regex.sub(' ', s)
+    # s = ''.join(ch for ch in s if ch not in exclude)
+    print(s)
+    """
+    doc=nlp(s)
+    question=preProcessQuestion(q, nlp)
+    allKeywords = findSubject(question)
+    #l=[str(X) for X in doc]
+    #need to find the relevant noun phrases!
+    
+    verbphrases1=extract_phrase(trees, "VP")
+    # print("verb phrases found", verbphrases1)
+    verbphrases=getSimilarities(' '.join(allKeywords), verbphrases1)
+    for (sim, verbphrase) in verbphrases:
+        l=[str(X) for X in nlp(verbphrase)]
+        for word in l:
+            prevword=""
+            if  qtype in dictS and qtype==dictS[word]:
+                if prevword!="" and prevword+" "==answer[-(len(prevword)):]:
+                    answer+=word+" "
+                    prevword=word
+                elif answer=="":
+                    answer+=word+" "
+                else:
+                    break
+            else:
+                pass
+
+    # print(answer, q)
+    # print(qtype)
+    # print(verbphrases)
+    if answer=="":
+        foundAnswer=False
+        for (sim, verbphrase) in verbphrases:
+            l=[str(X) for X in nlp(verbphrase)]
+            if foundAnswer:
+                break
+            otherEntities=get_other_entities(qtype)
+            for ent in otherEntities:
+                if foundAnswer:
+                    break
+                prevword=""
+                for word in l:
+                    if ent in dictS and ent==dictS[word]:
+                        if prevword!="" and prevword+" "==answer[len(answer)-len(prevword)-1:]:
+                            answer+=word+" "
+                            prevword=word
+                        elif answer=="":
+                            answer+=word+" "
+                            prevword=word
+                        else:
+                            foundAnswer=True
+                            break
+                    elif answer!="":
+                        prevword=word
+
+    if answer=="":
+        l=[str(X) for X in doc]
+        otherEntities=[qtype]+get_other_entities(qtype)
+        for ent in otherEntities:
+            if foundAnswer:
+                break
+            prevword=""
+            for word in l:
+                if ent==dictS[word]:
+                    if prevword!="" and prevword+" "==answer[len(answer)-len(prevword)-1:]:
+                        answer+=word+" "
+                        prevword=word
+                    elif answer=="":
+                        answer+=word+" "
+                        prevword=word
+                    else:
+                        foundAnswer=True
+                        break
+                elif answer!="":
+                    prevword=word
+        if answer=="":
+            answer="idk"
+    return answer
+
+#answers yes or no questions
+def answerYN(q, sentences):
+    negationWords=["not", "no", "doesn't", "can't", "didn't", "isn't", "won't", "neither", "nor", "wouldn't", "shouldn't"]
+    q=q[:len(q)-1]
+    question=nlp(q)
+    allKeywords=[]
+    for w in question:
+        if w.pos_ =="NOUN" or w.pos_=="PROPN":
+            allKeywords+=[w.text]
+    
+    answer=False
+    finalAnswer=False
+    flip=False
+
+    for sentence1 in sentences:
+        sentence=sentence1[:len(sentence1)-1].lower()
+        sentence=sentence.split()
+        allKey=True
+        keywordCopy=allKeywords+[]
+        for keyword in allKeywords:
+            key = nltk.stem.wordnet.WordNetLemmatizer().lemmatize(keyword.lower(),'v')
+            for sentenceWord in sentence:
+                sentWord=nltk.stem.wordnet.WordNetLemmatizer().lemmatize(sentenceWord.lower(),'v')
+                if keyword == sentenceWord or key==sentWord or key==sentenceWord:
+                    answer=True
+                    if keyword in keywordCopy:
+                        keywordCopy.remove(keyword)
+                if sentenceWord in negationWords or sentWord in negationWords:
+                    flip=True
+            if keywordCopy!=[]:
+                allKey=False
+            else:
+                allKey=True
+        if allKey==True:
+            if flip:
+                finalAnswer=not answer
+            else:
+                finalAnswer=answer
+
+    if finalAnswer:
+        return "yes"
+    else:
+        return "no"
+
+#finds answer for any type of question
+#input: question string, sentences (list)
+def answerQuestion(q, s, client):
+    answer=""
+    question=preProcessQuestion(q, nlp)
+    (x, type)=questionType(question)
+    if type=="BINARY":
+        answer=answerYN(q,s)
+    elif type=="REASON" or type=="IDEA":
+        answer=answerLong(q,s)
+    elif type=="UNK":
+        answer=answerLong(q, s)
+    else:
+        sent=answerLong(q,s)
+        answer=answerShort(q, sent ,type, client)
+    if answer=="idk":
+        answer=answerLong(q,s)
+    return answer
+
+def penn_to_wn(tag):
+    """ Convert between a Penn Treebank tag to a simplified Wordnet tag """
+    if tag.startswith('N'):
+        return 'n'
+ 
+    if tag.startswith('V'):
+        return 'v'
+ 
+    if tag.startswith('J'):
+        return 'a'
+ 
+    if tag.startswith('R'):
+        return 'r'
+ 
+    return None
+ 
+def tagged_to_synset(word, tag):
+    wn_tag = penn_to_wn(tag)
+    if wn_tag is None:
+        return None
+    try:
+        return wordnet.synsets(word, wn_tag)[0]
+    except:
+        return None
+ 
+def keywordSentenceSimilarity(sentence1, sentence2):
+    """ compute the sentence similarity using Wordnet """
+    # Tokenize and tag
+    sentence1 = nltk.pos_tag(nltk.word_tokenize(sentence1))
+    sentence2 = nltk.pos_tag(nltk.word_tokenize(sentence2))
+ 
+    # Get the synsets for the tagged words
+    synsets1 = [tagged_to_synset(*tagged_word) for tagged_word in sentence1]
+    synsets2 = [tagged_to_synset(*tagged_word) for tagged_word in sentence2]
+ 
+    # Filter out the Nones
+    synsets1 = [ss for ss in synsets1 if ss]
+    synsets2 = [ss for ss in synsets2 if ss]
+    score, count = 0.0, 0
+ 
+    # For each word in the first sentence
+    for synset in synsets1:
+        # Get the similarity value of the most similar word in the other sentence
+        best_scores=[]
+        for ss in synsets2:
+            if synset.path_similarity(ss):
+                best_scores=best_scores+[synset.path_similarity(ss)]
+        if best_scores==[]:
+            best_score=0
+        else:
+            best_score=max(best_scores)
+ 
+        if best_score is not None:
+            score += best_score
+            count += 1
+ 
+    # Average the values
+    #print(score)
+    if count==0:
+        return score
+    score /= count
+    return score
+
+def getSimilarities( keywords, text):
+    # split text into all sentences
+    #sentences = sent_tokenize(text)
+    similarities = []
+    for i in text:
+        sim = keywordSentenceSimilarity(keywords, i)
+        if sim > 0.0:
+            similarities.append((sim, i))
+    return sorted(similarities, reverse = True)
+
+def coref(S):
+    doc=nlp(S)
+    s=doc._.coref_resolved
+    return s
+
+if __name__ == '__main__':
+    
+    if len(sys.argv) != 3:
+        print("Usage: ./answer.py article.txt question.txt")
+        sys.exit(1)
+
+    article = sys.argv[1]
+    question = sys.argv[2]
+
+    with io.open(article, 'r', encoding='utf8') as f:
+        article_text = f.read()
+
+    with io.open(question, 'r', encoding='utf8') as f:
+        question_text = f.read()
+
+    article_text=coref(article_text)
+    s=nltk.sent_tokenize(article_text)
+    client = None
+    q_list = question_text.splitlines()
+    i = 1
+    for q in q_list:
+        if len(q) > 0:
+            curr_time = time.time()
+            print("A"+str(i)+" ", answerQuestion(q, s, client))
+            i+=1
+        
+
